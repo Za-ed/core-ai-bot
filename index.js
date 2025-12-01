@@ -1,3 +1,13 @@
+console.log(
+  "Loaded GEMINI_API_KEY prefix:",
+  process.env.GEMINI_API_KEY?.slice(0, 8),
+  "length:",
+  process.env.GEMINI_API_KEY?.length
+);
+
+
+
+
 import { Client, GatewayIntentBits } from "discord.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
