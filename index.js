@@ -1,9 +1,35 @@
 import { Client, GatewayIntentBits } from "discord.js";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
-import { askGemini } from "./ai.js";
 
 dotenv.config();
 
+// --------- إعداد Gemini ---------
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+const model = genAI.getGenerativeModel({
+  model: "gemini-1.5-flash",
+  systemInstruction:
+    "أنت بوت ديسكورد ذكي تساعد الأعضاء بالعربي، ردودك مختصرة وواضحة ومحترمة، وتتفادى الكلمات السيئة.",
+});
+
+async function askGemini(message) {
+  try {
+    const result = await model.generateContent([
+      {
+        role: "user",
+        parts: [{ text: message }],
+      },
+    ]);
+
+    return result.response.text();
+  } catch (error) {
+    console.error("Gemini Error:", error);
+    return "⚠️ صار خطأ أثناء التواصل مع الذكاء الاصطناعي.";
+  }
+}
+
+// --------- إعداد Discord Bot ---------
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -16,30 +42,44 @@ client.on("ready", () => {
   console.log(`🔥 Logged in as ${client.user.tag}`);
 });
 
-// فلترة كلمات
-const bannedWords = ["شتم", "كلمة_ممنوعة", "وسخ"]; // عدلهم
+// كلمات ممنوعة بسيطة (عدّلها زي ما بدك)
+const bannedWords = ["كلمة_ممنوعة1", "كلمة_ممنوعة2"];
 
 client.on("messageCreate", async (msg) => {
   if (msg.author.bot) return;
 
-  // فلترة كلمات الممنوعة
+  // فلترة كلمات ممنوعة
   if (bannedWords.some((w) => msg.content.includes(w))) {
-    await msg.delete();
-    return msg.channel.send(`⚠️ ${msg.author}, ممنوع استخدام هذه الكلمات.`);
+    try {
+      await msg.delete();
+    } catch (e) {
+      console.error("Delete message error:", e);
+    }
+    return msg.channel.send(`⚠️ ${msg.author}, ممنوع استخدام هاي الكلمات.`);
   }
 
-  // الخصوصية – الرسالة ما تبين لغيره
   const userMessage = msg.content;
+
+  // استدعاء Gemini
   const reply = await askGemini(userMessage);
 
-  await msg.reply({
-    content: reply,
-    allowedMentions: { repliedUser: true }, // يعمل mention
-  });
+  // رد مع منشن
+  try {
+    await msg.reply({
+      content: reply,
+      allowedMentions: { repliedUser: true },
+    });
+  } catch (e) {
+    console.error("Reply error:", e);
+  }
 
-  // حذف الرسالة بعد 5 دقائق
+  // حذف الرسالة الأصلية بعد 5 دقائق
   setTimeout(() => {
-    msg.delete().catch(() => {});
+    msg
+      .delete()
+      .catch(() => {
+        // ممكن ما يقدر يحذف (صلاحيات)، عادي تجاهل
+      });
   }, 5 * 60 * 1000);
 });
 
