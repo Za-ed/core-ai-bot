@@ -4,30 +4,33 @@ import http from "http";
 
 dotenv.config();
 
-// نستخدم fetch المدمج في Node 18+
+// نستخدم fetch المدمج في Node
 const fetch = globalThis.fetch;
 
-// ===== إعدادات عامة =====
-const ALLOWED_CHANNEL_ID = process.env.AI_CHANNEL_ID; // القناة المسموحة
-const DELETE_AFTER_MS = 5000;        // بعد كم يحذف رسالة العضو من القناة (5 ثواني)
-const COOLDOWN_MS = 8000;           // بين كل سؤال والتاني لنفس الشخص
-const SESSION_TIMEOUT_MS = 60000;   // بعد دقيقة بدون تفاعل يمسح الكونتكست
+// إعدادات أساسية
+const ALLOWED_CHANNEL_ID = process.env.AI_CHANNEL_ID;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// سياق المحادثة لكل مستخدم (زي شات جي بي تي)
-const conversationHistory = new Map(); // userId => [{role, content}, ...]
+const DELETE_AFTER_MS = 5000;      // بعد كم يحذف رسالة العضو من القناة (5 ثواني)
+const COOLDOWN_MS = 8000;         // 8 ثواني بين كل سؤال وسؤال لنفس الشخص
+const SESSION_TIMEOUT_MS = 60000; // دقيقة بدون تفاعل يمسح الكونتكست
 
-// Rate limit لكل مستخدم
-const lastUsage = new Map();          // userId => timestamp
+// سياق المحادثة (مثل ChatGPT) لكل مستخدم
+// userId => [{ role: "user"|"assistant", content: "..." }, ...]
+const conversationHistory = new Map();
 
-// آخر نشاط لكل مستخدم (للتايم آوت)
-const lastActivity = new Map();       // userId => timestamp
+// Rate limit
+const lastUsage = new Map();    // userId => timestamp
 
-// كلمات ممنوعة (عدلها براحتك)
+// آخر نشاط لكل مستخدم
+const lastActivity = new Map(); // userId => timestamp
+
+// كلمات ممنوعة
 const bannedWords = ["badword1", "كلمة_ممنوعة", "fuck"];
 
-// دالة تجيب سياق المستخدم مع تحديد أقصى طول
+// دالة تجيب سياق المستخدم
 function getUserHistory(userId) {
-  const MAX_PAIRS = 10; // 10 أسئلة + 10 أجوبة = 20 رسالة
+  const MAX_PAIRS = 10; // 10 أسئلة + 10 أجوبة
   let history = conversationHistory.get(userId) || [];
   if (history.length > MAX_PAIRS * 2) {
     history = history.slice(-MAX_PAIRS * 2);
@@ -51,23 +54,21 @@ client.on("ready", () => {
 
 // ===== التعامل مع الرسائل في القناة =====
 client.on("messageCreate", async (message) => {
-  // تجاهل البوتات
   if (message.author.bot) return;
 
-  // السماح فقط لقناة معيّنة
+  // قناة الـ AI فقط
   if (ALLOWED_CHANNEL_ID && message.channel.id !== ALLOWED_CHANNEL_ID) return;
 
   const userId = message.author.id;
   const userMsg = message.content?.trim();
   if (!userMsg) return;
 
-  // 🔒 فلتر كلمات ممنوعة
+  // فلتر كلمات ممنوعة
   const lower = userMsg.toLowerCase();
   if (bannedWords.some((w) => lower.includes(w.toLowerCase()))) {
     const warn = await message.reply(
       `⚠️ <@${userId}> رسالتك فيها كلمات غير مسموحة، حاول تعيد صياغتها.`
     );
-    // نحذف تحذير البوت + رسالة العضو بعد شوية
     setTimeout(() => warn.delete().catch(() => {}), DELETE_AFTER_MS);
     setTimeout(() => message.delete().catch(() => {}), DELETE_AFTER_MS);
     return;
@@ -75,7 +76,7 @@ client.on("messageCreate", async (message) => {
 
   const now = Date.now();
 
-  // ⏳ Rate Limit
+  // Rate limit
   const lastTime = lastUsage.get(userId) || 0;
   if (now - lastTime < COOLDOWN_MS) {
     const seconds = Math.ceil((COOLDOWN_MS - (now - lastTime)) / 1000);
@@ -87,14 +88,14 @@ client.on("messageCreate", async (message) => {
   }
   lastUsage.set(userId, now);
 
-  // 🧠 Session Timeout (مسح الكونتكست بعد دقيقة بدون تفاعل)
+  // Session timeout (لو صارلك أكثر من دقيقة ساكت نمسح الكونتكست)
   const lastAct = lastActivity.get(userId) || 0;
   if (now - lastAct > SESSION_TIMEOUT_MS) {
-    conversationHistory.delete(userId); // نبدأ محادثة جديدة
+    conversationHistory.delete(userId);
   }
   lastActivity.set(userId, now);
 
-  // نحاول نرسل typing في الخاص (DM)
+  // افتح DM مع المستخدم
   let dmChannel;
   try {
     dmChannel = await message.author.createDM();
@@ -108,70 +109,79 @@ client.on("messageCreate", async (message) => {
     return;
   }
 
-  // 🧠 جلب سياق المستخدم (زي شات جي بي تي)
+  // جلب السياق
   const history = getUserHistory(userId);
 
-  const messages = [
-    {
-      role: "system",
-      content:
-        "You are ChatGPT, a large language model, running inside a private Discord bot. " +
-        "Respond in Arabic by default (unless the user uses another language). " +
-        "Be helpful, friendly, clear, and keep track of each user's context separately."
-    },
-    ...history,
-    { role: "user", content: userMsg }
-  ];
+  // تحويل سياقنا إلى صيغة Gemini (contents)
+  const contents = [];
+
+  // systemInstruction يعرّف شخصية البوت (زي ChatGPT)
+  const systemInstruction = {
+    parts: [
+      {
+        text:
+          "You are ChatGPT, a large language model running inside a private Discord bot. " +
+          "Respond in Arabic by default unless the user writes in another language. " +
+          "Be friendly, concise, and keep conversation context per user."
+      }
+    ]
+  };
+
+  // نضيف التاريخ القديم
+  for (const msg of history) {
+    contents.push({
+      role: msg.role === "assistant" ? "model" : "user",
+      parts: [{ text: msg.content }]
+    });
+  }
+
+  // ونسجّل الرسالة الجديدة
+  contents.push({
+    role: "user",
+    parts: [{ text: userMsg }]
+  });
 
   let replyText;
 
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+    const response = await fetch(url, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "https://github.com/zaed/core-ai-bot",
-        "X-Title": "core-ai-bot",
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "meta-llama/llama-3.1-70b-instruct",
-        messages
+        contents,
+        systemInstruction
       })
     });
 
     const data = await response.json();
-    console.log("API Response:", data);
+    console.log("Gemini API Response:", data);
 
     replyText =
-      data.choices?.[0]?.message?.content ||
-      "⚠️ ما قدرت أطلع رد من الذكاء الاصطناعي، جرّب بعد شوي.";
+      data.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "⚠️ ما قدرت أطلع رد من Gemini، جرّب بعد شوي.";
   } catch (err) {
     console.error("❌ Fetch Error:", err);
-    replyText = "❌ صار خطأ أثناء الاتصال بالذكاء الاصطناعي، جرّب بعد شوي.";
+    replyText = "❌ صار خطأ أثناء الاتصال بـ Gemini API.";
   }
 
-  // نحفظ السؤال والجواب في الكونتكست
+  // نحفظ السؤال والجواب في السياق
   history.push({ role: "user", content: userMsg });
   history.push({ role: "assistant", content: replyText });
   conversationHistory.set(userId, history);
 
-  // ✅ نبعث الرد على الخاص DM فقط
+  // نرسل الرد على الخاص فقط
   try {
-    await dmChannel.send(`🤖 **Core AI Bot**\n${replyText}`);
+    await dmChannel.send(`🤖 **Core AI Bot (Gemini)**\n${replyText}`);
   } catch (err) {
     console.error("❌ Error sending DM:", err);
-    const warn = await message.reply(
-      `❌ <@${userId}> ما قدرت أبعتلك الرد على الخاص، تأكد إنك ما حاجب الرسائل من البوت.`
-    );
-    setTimeout(() => warn.delete().catch(() => {}), DELETE_AFTER_MS);
-    return;
   }
 
-  // ✅ نعمل رياكشن على رسالة العضو عشان يفهم إن الرد وصله على الخاص
+  // رياكشن تأكيد + حذف رسالة من القناة بعد 5 ثواني
   message.react("✅").catch(() => {});
-
-  // 🗑️ نحذف رسالة العضو من القناة بعد 5 ثواني (لتقليل اللي بشوفوها)
   setTimeout(() => {
     message.delete().catch(() => {});
   }, DELETE_AFTER_MS);
@@ -180,10 +190,10 @@ client.on("messageCreate", async (message) => {
 // تشغيل البوت
 client.login(process.env.DISCORD_TOKEN);
 
-// Keep-alive server ل Railway
+// Keep-alive server لـ Railway
 const server = http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("Core AI Bot is running ✅");
+  res.end("Core AI Bot with Gemini is running ✅");
 });
 
 server.listen(process.env.PORT || 3000, () => {
