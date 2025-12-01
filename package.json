@@ -1,13 +1,14 @@
 {
   "name": "core-ai-bot",
   "version": "1.0.0",
-  "main": "index.js",
   "type": "module",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "14.15.3",
-    "dotenv": "16.4.5"
+    "dotenv": "16.4.5",
+    "@google/generative-ai": "0.21.0"
   }
 }
