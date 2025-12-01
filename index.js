@@ -5,13 +5,12 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // --------- إعداد Gemini ---------
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
 const model = genAI.getGenerativeModel({
-  model: "gemini-1.5-flash",
+  model: "gemini-flash-latest",
   systemInstruction:
     "أنت بوت ديسكورد ذكي تساعد الأعضاء بالعربي، ردودك مختصرة وواضحة ومحترمة، وتتفادى الكلمات السيئة.",
 });
+
 
 async function askGemini(message) {
   try {
