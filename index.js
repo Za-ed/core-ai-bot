@@ -1,9 +1,13 @@
 import { Client, GatewayIntentBits } from "discord.js";
 import dotenv from "dotenv";
-import http from "http"; // للسيرفر الصغير حق Railway
+import http from "http";
+
 dotenv.config();
 
 const fetch = globalThis.fetch;
+
+// قناة الـ AI المسموحة فقط
+const ALLOWED_CHANNEL_ID = process.env.AI_CHANNEL_ID;
 
 // ====== Discord Client ======
 const client = new Client({
@@ -20,10 +24,18 @@ client.on("ready", () => {
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
+  // السماح فقط لقناة واحدة
+  if (ALLOWED_CHANNEL_ID && interaction.channelId !== ALLOWED_CHANNEL_ID) {
+    return interaction.reply({
+      content: `❌ هذا الأمر مسموح فقط في <#${ALLOWED_CHANNEL_ID}>`,
+      ephemeral: true
+    });
+  }
+
   if (interaction.commandName === "ask") {
     const userMsg = interaction.options.getString("message");
 
-    // نخلي الرد خاص (ephemeral)
+    // الرد يكون خاص
     await interaction.deferReply({ ephemeral: true });
 
     try {
@@ -31,14 +43,17 @@ client.on("interactionCreate", async (interaction) => {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "HTTP-Referer": "https://github.com/zaed/core-ai-bot", // أي رابط لمشروعك
-          "X-Title": "core-ai-bot", // اسم التطبيق
+          "HTTP-Referer": "https://github.com/zaed/core-ai-bot",
+          "X-Title": "core-ai-bot",
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
           model: "meta-llama/llama-3.1-70b-instruct",
           messages: [
-            { role: "system", content: "You are a helpful, concise assistant inside a private Discord bot." },
+            {
+              role: "system",
+              content: "You are a helpful, concise assistant inside a private Discord bot. Answer clearly and briefly."
+            },
             { role: "user", content: userMsg }
           ]
         })
