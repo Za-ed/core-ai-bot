@@ -15,14 +15,17 @@ const model = genAI.getGenerativeModel({
 
 async function askGemini(message) {
   try {
-    const result = await model.generateContent([
-      {
-        role: "user",
-        parts: [{ text: message }],
-      },
-    ]);
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: message }],
+        },
+      ],
+    });
 
-    return result.response.text();
+    const response = await result.response;
+    return response.text();
   } catch (error) {
     console.error("Gemini Error:", error);
     return "⚠️ صار خطأ أثناء التواصل مع الذكاء الاصطناعي.";
