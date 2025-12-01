@@ -4,13 +4,15 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-// --------- إعداد Gemini ---------
+// -------------------- Gemini Setup --------------------
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 const model = genAI.getGenerativeModel({
   model: "gemini-flash-latest",
   systemInstruction:
-    "أنت بوت ديسكورد ذكي تساعد الأعضاء بالعربي، ردودك مختصرة وواضحة ومحترمة، وتتفادى الكلمات السيئة.",
+    "أنت بوت ديسكورد ذكي ترد بالعربي، ردودك محترمة، قصيرة وواضحة. تجنب الكلمات السيئة، وساعد المستخدمين.",
 });
-
 
 async function askGemini(message) {
   try {
@@ -27,11 +29,12 @@ async function askGemini(message) {
     return response.text();
   } catch (error) {
     console.error("Gemini Error:", error);
-    return "⚠️ صار خطأ أثناء التواصل مع الذكاء الاصطناعي.";
+    return "⚠️ حدث خطأ أثناء التواصل مع الذكاء الاصطناعي.";
   }
 }
 
-// --------- إعداد Discord Bot ---------
+// -------------------- Discord Bot Setup --------------------
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -40,48 +43,35 @@ const client = new Client({
   ],
 });
 
+const bannedWords = ["زب", "كس", "قحبة", "شرموط"]; // عدل كما تريد
+
 client.on("ready", () => {
   console.log(`🔥 Logged in as ${client.user.tag}`);
 });
 
-// كلمات ممنوعة بسيطة (عدّلها زي ما بدك)
-const bannedWords = ["كلمة_ممنوعة1", "كلمة_ممنوعة2"];
-
 client.on("messageCreate", async (msg) => {
   if (msg.author.bot) return;
 
-  // فلترة كلمات ممنوعة
   if (bannedWords.some((w) => msg.content.includes(w))) {
-    try {
-      await msg.delete();
-    } catch (e) {
-      console.error("Delete message error:", e);
-    }
-    return msg.channel.send(`⚠️ ${msg.author}, ممنوع استخدام هاي الكلمات.`);
+    await msg.delete().catch(() => {});
+    return msg.channel.send(
+      `⚠️ ممنوع استخدام كلمات غير لائقة يا ${msg.author}.`
+    );
   }
 
   const userMessage = msg.content;
 
-  // استدعاء Gemini
   const reply = await askGemini(userMessage);
 
-  // رد مع منشن
-  try {
-    await msg.reply({
+  await msg
+    .reply({
       content: reply,
       allowedMentions: { repliedUser: true },
-    });
-  } catch (e) {
-    console.error("Reply error:", e);
-  }
+    })
+    .catch(() => {});
 
-  // حذف الرسالة الأصلية بعد 5 دقائق
   setTimeout(() => {
-    msg
-      .delete()
-      .catch(() => {
-        // ممكن ما يقدر يحذف (صلاحيات)، عادي تجاهل
-      });
+    msg.delete().catch(() => {});
   }, 5 * 60 * 1000);
 });
 
